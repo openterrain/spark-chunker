@@ -5,14 +5,53 @@ import os
 from urlparse import urlparse
 
 import boto3
+import mercantile
 import numpy
 import rasterio
 from rasterio import crs
-from rasterio.warp import (reproject, RESAMPLING, calculate_default_transform)
-# from rasterio._io import virtual_file_to_buffer
+from rasterio.transform import from_bounds
+from rasterio.warp import (reproject, RESAMPLING, calculate_default_transform, transform)
+from rasterio._io import virtual_file_to_buffer
 
 APP_NAME = "Reproject and chunk"
 CHUNK_SIZE = 512
+
+
+def mkdir_p(dir):
+    try:
+        os.makedirs(dir)
+    except OSError as exc: # Python >2.5
+        if exc.errno == errno.EEXIST and os.path.isdir(dir):
+            pass
+        else: raise
+
+
+def process_tile(tile, base_kwds, src):
+    """Process a single tile."""
+
+    # Get the bounds of the tile.
+    ulx, uly = mercantile.xy(
+        *mercantile.ul(tile.x, tile.y, tile.z))
+    lrx, lry = mercantile.xy(
+        *mercantile.ul(tile.x + 1, tile.y + 1, tile.z))
+
+    kwds = base_kwds.copy()
+    kwds["transform"] = from_bounds(ulx, lry, lrx, uly, CHUNK_SIZE, CHUNK_SIZE)
+
+    tmp_path = "/vsimem/%d/%d/%d" % (tile.z, tile.x, tile.y)
+
+    with rasterio.open(tmp_path, "w", **kwds) as tmp:
+        # Reproject the src dataset into image tile.
+        for bidx in src.indexes:
+            reproject(
+                rasterio.band(src, bidx),
+                rasterio.band(tmp, bidx))
+
+        tile_data = tmp.read()
+        if tile_data.all() and tile_data[0][0][0] == src.nodata:
+            return
+
+    return tmp_path
 
 
 def chunk(input, out_dir):
@@ -38,14 +77,6 @@ def chunk(input, out_dir):
     input_uri = urlparse(input)
     base_name = os.path.splitext(os.path.basename(input_uri.path))[0]
 
-    # TODO only do this when writing locally
-    try:
-        os.makedirs(out_dir)
-    except OSError as exc: # Python >2.5
-        if exc.errno == errno.EEXIST and os.path.isdir(out_dir):
-            pass
-        else: raise
-
 
     resampling = getattr(RESAMPLING, resampling)
 
@@ -53,136 +84,57 @@ def chunk(input, out_dir):
         with rasterio.open(input) as src:
             int_kwargs = src.meta.copy()
             int_kwargs["driver"] = driver
-
-            # TODO calculate resolution according to nearest zoom
-
-            dst_crs = crs.from_string(dst_crs)
-            dst_transform, dst_width, dst_height = calculate_default_transform(
-                src.crs, dst_crs, src.width, src.height, *src.bounds,
-                resolution=None)
-
-            int_kwargs.update({
-                "crs": dst_crs,
-                "transform": dst_transform,
-                "affine": dst_transform,
-                "width": dst_width,
-                "height": dst_height
-            })
-
+            int_kwargs["crs"] = dst_crs
+            int_kwargs["height"] = CHUNK_SIZE
+            int_kwargs["width"] = CHUNK_SIZE
             int_kwargs.update(**creation_options)
 
-            # TODO use less memory by only processing a band at a time,
-            # memoizing window information
-            with rasterio.open("/vsimem/img", "w", **int_kwargs) as interim:
-                for i in range(1, src.count + 1):
-                    reproject(
-                        source=rasterio.band(src, i),
-                        destination=rasterio.band(interim, i),
-                        src_transform=src.affine,
-                        src_crs=src.crs,
-                        dst_transform=int_kwargs["transform"],
-                        dst_crs=int_kwargs["crs"],
-                        resampling=resampling,
-                        num_threads=threads)
+            # Compute the geographic bounding box of the dataset.
+            (west, east), (south, north) = transform(
+                src.crs, "EPSG:4326", src.bounds[::2], src.bounds[1::2])
 
-            with rasterio.open("/vsimem/img", "r") as interim:
-                cols = interim.meta["width"]
-                rows = interim.meta["height"]
+            affine, _, _ = calculate_default_transform(src.crs, dst_crs,
+                src.width, src.height, *src.bounds, resolution=None)
 
-                # determine the number of tiles necessary for coverage
-                tile_cols = int(math.ceil(cols / float(CHUNK_SIZE)))
-                tile_rows = int(math.ceil(rows / float(CHUNK_SIZE)))
+            # grab the lowest resolution dimension
+            resolution = max(abs(affine[0]), abs(affine[4]))
 
-                # create windows
-                # TODO turn this into a generator
-                windows = {}
-                for tile_row in xrange(0, tile_rows):
-                    windows[tile_row] = {}
+            zoom = int(round(math.log((2 * math.pi * 6378137) /
+                                      (resolution * CHUNK_SIZE)) / math.log(2)))
 
-                    start = tile_row * CHUNK_SIZE
-                    row_window = (start, start + CHUNK_SIZE)
+            print "target zoom", zoom
 
-                    for tile_col in xrange(0, tile_cols):
-                        start = tile_col * CHUNK_SIZE
-                        col_window = (start, start + CHUNK_SIZE)
-                        window = (row_window, col_window)
-                        windows[tile_row][tile_col] = window
+            # Initialize iterator over output tiles.
+            # TODO process a band at a time
+            tiles = mercantile.tiles(
+                west, south, east, north, range(zoom, zoom + 1))
 
-                # Logic for doing extent windowing.
-                affine = interim.affine
-                (xmin, ymin) = affine * (0, 0)
+            for tile in tiles:
+                tmp_path = process_tile(tile, int_kwargs, src)
 
-                # globally align chunks
-                # TODO globally aligned chunks are only useful at fixed
-                # resolutions
-                origin = ~interim.affine * (0, 0)
-                xoffset = CHUNK_SIZE - (int(math.floor(origin[0]))
-                                        % CHUNK_SIZE)
-                yoffset = CHUNK_SIZE - (int(math.floor(origin[1]))
-                                        % CHUNK_SIZE)
+                if tmp_path is None:
+                    continue
 
+                contents = bytearray(virtual_file_to_buffer(tmp_path))
 
-                def get_affine(col, row):
-                    (tx, ty) = affine * (col, row)
-                    ta = affine.translation(tx - xmin, ty - ymin) * affine
-                    # (ntx, nty) = ta * (0, 0)
-                    (ntx, nty) = ta * (-xoffset, -yoffset)
+                # if uri.scheme == "s3":
+                #     client = boto3.client("s3")
+                #
+                #     response = client.put_object(
+                #         ACL="public-read",
+                #         Body=bytes(contents),
+                #         Bucket=uri.netloc,
+                #         # CacheControl="TODO",
+                #         ContentType="image/tiff",
+                #         Key=uri.path[1:]
+                #     )
+                # else:
+                output = os.path.join(out_dir, "%d/%d/%d.tif" % (tile.z, tile.x, tile.y))
+                mkdir_p(os.path.dirname(output))
 
-                    return ta
-
-
-                for i in range(1, interim.count + 1):
-                    for tile_row in xrange(0, tile_rows):
-                        for tile_col in xrange(0, tile_cols):
-                            read_window = windows[tile_row][tile_col]
-
-                            tile_data = interim.read(i, window=read_window)
-
-                            # skip tiles that are all NODATA
-                            if numpy.all(tile_data) and tile_data[0][0] == src.nodata:
-                                continue
-
-                            (data_rows, data_cols) = tile_data.shape
-
-                            name = "%s-%d_%d_%d" % (base_name, i, tile_col,
-                                                    tile_row)
-
-                            tile_affine = get_affine(tile_col * CHUNK_SIZE,
-                                                     tile_row * CHUNK_SIZE)
-
-                            tile_meta = interim.meta.copy()
-                            tile_meta.update(creation_options)
-                            tile_meta.update({
-                                "height":      data_rows,
-                                "width":       data_cols,
-                                "count":       1,
-                                "transform":   tile_affine,
-                            })
-
-                            with rasterio.open(os.path.join(out_dir, name
-                                                            + ".tif"), "w",
-                                               **tile_meta) as dst:
-                                dst.write(tile_data, 1)
-
-            # contents = bytearray(virtual_file_to_buffer("/vsimem/img"))
-            #
-            # if uri.scheme == "s3":
-            #     client = boto3.client("s3")
-            #
-            #     response = client.put_object(
-            #         ACL="public-read",
-            #         Body=bytes(contents),
-            #         Bucket=uri.netloc,
-            #         # CacheControl="TODO",
-            #         ContentType="image/tiff",
-            #         Key=uri.path[1:]
-            #     )
-            # else:
-            #     f = open(output, "w")
-            #     f.write(contents)
-            #     f.close()
-            #
-            # return output
+                f = open(output, "w")
+                f.write(contents)
+                f.close()
 
 
 def main(sc):
