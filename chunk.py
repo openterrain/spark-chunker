@@ -166,7 +166,7 @@ def main(sc, input, out_dir):
 
     tiles = sc.parallelize(get_tiles(input, dst_crs=creation_options["crs"]))
 
-    tiles.map(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir)).count()
+    tiles.foreach(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
 
 
 if __name__ == "__main__":
