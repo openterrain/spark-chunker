@@ -29,6 +29,8 @@ def mkdir_p(dir):
 def process_chunk(tile, input, creation_options, resampling="near", out_dir="."):
     """Process a single tile."""
 
+    print tile
+
     input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
     input_uri = urlparse(input)
 
@@ -102,7 +104,7 @@ def process_chunk(tile, input, creation_options, resampling="near", out_dir=".")
         f.close()
 
 
-def get_tiles(input, dst_crs="EPSG:3857"):
+def get_zoom(input, dst_crs="EPSG:3857"):
     input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
     with rasterio.drivers():
         with rasterio.open(input) as src:
@@ -116,14 +118,23 @@ def get_tiles(input, dst_crs="EPSG:3857"):
             # grab the lowest resolution dimension
             resolution = max(abs(affine[0]), abs(affine[4]))
 
-            zoom = int(round(math.log((2 * math.pi * 6378137) /
+            return int(round(math.log((2 * math.pi * 6378137) /
                                       (resolution * CHUNK_SIZE)) / math.log(2)))
 
-            print "target zoom", zoom
+
+def get_tiles(zoom, input, dst_crs="EPSG:3857"):
+    print "getting tiles for", input
+    input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
+    with rasterio.drivers():
+        with rasterio.open(input) as src:
+            # Compute the geographic bounding box of the dataset.
+            (west, east), (south, north) = transform(
+                src.crs, "EPSG:4326", src.bounds[::2], src.bounds[1::2])
 
             # Initialize an iterator over output tiles.
             return mercantile.tiles(
                 west, south, east, north, range(zoom, zoom + 1))
+
 
 def chunk(input, out_dir):
     """
@@ -164,9 +175,14 @@ def main(sc, input, out_dir):
         "blockysize": 256,
     }
 
-    tiles = sc.parallelize(get_tiles(input, dst_crs=creation_options["crs"]))
+    zoom = get_zoom(input)
 
-    tiles.foreach(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
+    client = boto3.client("s3")
+
+    paginator = client.get_paginator("list_objects")
+    source_pages = paginator.paginate(Bucket="ned-13arcsec.openterrain.org", Prefix="4326/")
+
+    sc.parallelize(source_pages).flatMap(lambda page: page["Contents"]).map(lambda item: "s3://ned-13arcsec.openterrain.org/" + item["Key"]).flatMap(lambda source: get_tiles(zoom, source)).distinct().foreach(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
 
 
 if __name__ == "__main__":
