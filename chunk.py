@@ -14,7 +14,7 @@ from rasterio.warp import (reproject, RESAMPLING, calculate_default_transform, t
 from rasterio._io import virtual_file_to_buffer
 
 APP_NAME = "Reproject and chunk"
-CHUNK_SIZE = 512
+CHUNK_SIZE = 4096
 
 
 def mkdir_p(dir):
@@ -26,8 +26,10 @@ def mkdir_p(dir):
         else: raise
 
 
-def process_tile(tile, base_kwds, src):
+def process_chunk(tile, input, creation_options, resampling="near", out_dir="."):
     """Process a single tile."""
+
+    input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
 
     # Get the bounds of the tile.
     ulx, uly = mercantile.xy(
@@ -35,60 +37,64 @@ def process_tile(tile, base_kwds, src):
     lrx, lry = mercantile.xy(
         *mercantile.ul(tile.x + 1, tile.y + 1, tile.z))
 
-    kwds = base_kwds.copy()
-    kwds["transform"] = from_bounds(ulx, lry, lrx, uly, CHUNK_SIZE, CHUNK_SIZE)
-
     tmp_path = "/vsimem/%d/%d/%d" % (tile.z, tile.x, tile.y)
 
-    with rasterio.open(tmp_path, "w", **kwds) as tmp:
-        # Reproject the src dataset into image tile.
-        for bidx in src.indexes:
-            reproject(
-                rasterio.band(src, bidx),
-                rasterio.band(tmp, bidx))
+    with rasterio.open(input, "r") as src:
+        meta = src.meta.copy()
+        meta.update(creation_options)
+        meta["height"] = CHUNK_SIZE
+        meta["width"] = CHUNK_SIZE
+        meta["transform"] = from_bounds(ulx, lry, lrx, uly, CHUNK_SIZE, CHUNK_SIZE)
 
-        tile_data = tmp.read()
-        if tile_data.all() and tile_data[0][0][0] == src.nodata:
-            return
+        with rasterio.open(tmp_path, "w", **meta) as tmp:
+            # Reproject the src dataset into image tile.
+            for bidx in src.indexes:
+                reproject(
+                    source=rasterio.band(src, bidx),
+                    destination=rasterio.band(tmp, bidx),
+                    resampling=getattr(RESAMPLING, resampling),
+                    num_threads=multiprocessing.cpu_count() / 2,
+                )
 
-    return tmp_path
+            # check for chunks contain only NODATA
+            tile_data = tmp.read()
+            if tile_data.all() and tile_data[0][0][0] == src.nodata:
+                return
+
+    output_uri = urlparse(out_dir)
+    contents = bytearray(virtual_file_to_buffer(tmp_path))
+
+    if output_uri.scheme == "s3":
+        client = boto3.client("s3")
+
+        bucket = output_uri.netloc
+        key = "%s/%d/%d/%d.tif" % (output_uri.path[1:], tile.z, tile.x, tile.y)
+
+        response = client.put_object(
+            ACL="public-read",
+            Body=bytes(contents),
+            Bucket=bucket,
+            # CacheControl="TODO",
+            ContentType="image/tiff",
+            Key=key
+        )
+
+        return "s3://%s/%s" % (bucket, key)
+    else:
+        output_path = os.path.join(out_dir, "%d/%d/%d.tif" % (tile.z, tile.x, tile.y))
+        mkdir_p(os.path.dirname(output_path))
+
+        f = open(output_path, "w")
+        f.write(contents)
+        f.close()
+
+        return output_path
 
 
-def chunk(input, out_dir):
-    """
-    Intended for conversion from whatever the source format is to matching
-    filenames containing 4326 data, etc.
-    """
-    resampling = "bilinear"
-    driver = "GTiff"
-    dst_crs = "EPSG:3857"
-    threads = multiprocessing.cpu_count() / 2
-    creation_options = {
-        "tiled": True,
-        "compress": "deflate",
-        "predictor":   2, # 3 for floats, 2 otherwise
-        "sparse_ok": True,
-        "blockxsize": 256,
-        "blockysize": 256,
-    }
-
-    # NOTE: not using vsicurl, as the entire file needs to be read anyway
-    input = input.replace("s3://", "http://s3.amazonaws.com/")
-    input_uri = urlparse(input)
-    base_name = os.path.splitext(os.path.basename(input_uri.path))[0]
-
-
-    resampling = getattr(RESAMPLING, resampling)
-
+def get_tiles(input, dst_crs="EPSG:3857"):
+    input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
     with rasterio.drivers():
         with rasterio.open(input) as src:
-            int_kwargs = src.meta.copy()
-            int_kwargs["driver"] = driver
-            int_kwargs["crs"] = dst_crs
-            int_kwargs["height"] = CHUNK_SIZE
-            int_kwargs["width"] = CHUNK_SIZE
-            int_kwargs.update(**creation_options)
-
             # Compute the geographic bounding box of the dataset.
             (west, east), (south, north) = transform(
                 src.crs, "EPSG:4326", src.bounds[::2], src.bounds[1::2])
@@ -104,48 +110,65 @@ def chunk(input, out_dir):
 
             print "target zoom", zoom
 
-            # Initialize iterator over output tiles.
-            # TODO process a band at a time
-            tiles = mercantile.tiles(
+            # Initialize an iterator over output tiles.
+            return mercantile.tiles(
                 west, south, east, north, range(zoom, zoom + 1))
 
-            for tile in tiles:
-                tmp_path = process_tile(tile, int_kwargs, src)
+def chunk(input, out_dir):
+    """
+    Intended for conversion from whatever the source format is to matching
+    filenames containing 4326 data, etc.
+    """
+    resampling = "bilinear"
 
-                if tmp_path is None:
-                    continue
+    creation_options = {
+        "driver": "GTiff",
+        "crs": "EPSG:3857",
+        "tiled": True,
+        "compress": "deflate",
+        "predictor":   2, # 3 for floats, 2 otherwise
+        "sparse_ok": True,
+        "blockxsize": 256,
+        "blockysize": 256,
+    }
 
-                contents = bytearray(virtual_file_to_buffer(tmp_path))
+    tiles = get_tiles(input, dst_crs=creation_options["crs"])
 
-                # if uri.scheme == "s3":
-                #     client = boto3.client("s3")
-                #
-                #     response = client.put_object(
-                #         ACL="public-read",
-                #         Body=bytes(contents),
-                #         Bucket=uri.netloc,
-                #         # CacheControl="TODO",
-                #         ContentType="image/tiff",
-                #         Key=uri.path[1:]
-                #     )
-                # else:
-                output = os.path.join(out_dir, "%d/%d/%d.tif" % (tile.z, tile.x, tile.y))
-                mkdir_p(os.path.dirname(output))
+    outputs = [process_chunk(tile, input, creation_options, resampling=resampling, out_dir=out_dir) for tile in tiles]
 
-                f = open(output, "w")
-                f.write(contents)
-                f.close()
+    outputs = filter(lambda x: x is not None, outputs)
+
+    print outputs
 
 
-def main(sc):
-    pass
+def main(sc, input, out_dir):
+    creation_options = {
+        "driver": "GTiff",
+        "crs": "EPSG:3857",
+        "tiled": True,
+        "compress": "deflate",
+        "predictor":   2, # 3 for floats, 2 otherwise
+        "sparse_ok": True,
+        "blockxsize": 256,
+        "blockysize": 256,
+    }
+
+    tiles = sc.parallelize(get_tiles(input, dst_crs=creation_options["crs"]))
+
+    outputs = tiles.map(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir)).filter(lambda filename: filename is not None).collect()
+
+    print outputs
 
 
 if __name__ == "__main__":
-    # from pyspark import SparkConf, SparkContext
-    #
-    # conf = SparkConf().setAppName(APP_NAME)
-    # sc = SparkContext(conf=conf)
-    #
-    # main(sc)
-    chunk("imgn19w065_13.tif", "chunks")
+    from pyspark import SparkConf, SparkContext
+
+    conf = SparkConf().setAppName(APP_NAME)
+    sc = SparkContext(conf=conf)
+
+    main(sc, "http://s3.amazonaws.com/ned-13arcsec.openterrain.org/4326.vrt", "s3://ned-13arcsec.openterrain.org/3857")
+    # main(sc, "4326.vrt", "ned")
+    # main(sc, "imgn19w065_13.tif", "s3://ned-13arcsec.openterrain.org/3857")
+
+    # chunk("imgn19w065_13.tif", "s3://ned-13arcsec.openterrain.org/3857")
+    # chunk("imgn19w065_13.tif", "chunks")
