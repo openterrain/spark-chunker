@@ -30,6 +30,21 @@ def process_chunk(tile, input, creation_options, resampling="near", out_dir=".")
     """Process a single tile."""
 
     input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
+    input_uri = urlparse(input)
+
+    if input_uri.scheme == "s3":
+        client = boto.client("s3")
+
+        bucket = input_uri.netloc
+        key = input_uri.path[1:]
+
+        response = client.head_object(
+            Bucket=bucket,
+            Prefix=key
+        )
+
+        if response.get("Contents") is not None:
+            return
 
     # Get the bounds of the tile.
     ulx, uly = mercantile.xy(
