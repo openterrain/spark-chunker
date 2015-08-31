@@ -78,8 +78,6 @@ def process_chunk(tile, input, creation_options, resampling="near", out_dir=".")
             ContentType="image/tiff",
             Key=key
         )
-
-        return "s3://%s/%s" % (bucket, key)
     else:
         output_path = os.path.join(out_dir, "%d/%d/%d.tif" % (tile.z, tile.x, tile.y))
         mkdir_p(os.path.dirname(output_path))
@@ -87,8 +85,6 @@ def process_chunk(tile, input, creation_options, resampling="near", out_dir=".")
         f = open(output_path, "w")
         f.write(contents)
         f.close()
-
-        return output_path
 
 
 def get_tiles(input, dst_crs="EPSG:3857"):
@@ -155,9 +151,7 @@ def main(sc, input, out_dir):
 
     tiles = sc.parallelize(get_tiles(input, dst_crs=creation_options["crs"]))
 
-    outputs = tiles.map(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir)).filter(lambda filename: filename is not None).collect()
-
-    print outputs
+    tiles.map(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir)).count()
 
 
 if __name__ == "__main__":
