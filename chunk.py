@@ -182,7 +182,9 @@ def main(sc, input, out_dir):
     paginator = client.get_paginator("list_objects")
     source_pages = paginator.paginate(Bucket="ned-13arcsec.openterrain.org", Prefix="4326/")
 
-    sc.parallelize(source_pages).flatMap(lambda page: page["Contents"]).map(lambda item: "s3://ned-13arcsec.openterrain.org/" + item["Key"]).flatMap(lambda source: get_tiles(zoom, source)).distinct().foreach(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
+    tiles = sc.parallelize(source_pages).flatMap(lambda page: page["Contents"]).map(lambda item: "s3://ned-13arcsec.openterrain.org/" + item["Key"]).repartition(sc.defaultParallelism).flatMap(lambda source: get_tiles(zoom, source)).distinct().cache()
+
+    tiles.foreach(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
 
 
 if __name__ == "__main__":
