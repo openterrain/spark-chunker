@@ -54,7 +54,7 @@ def process_chunk(tile, input, creation_options, resampling="near", out_dir=".")
     lrx, lry = mercantile.xy(
         *mercantile.ul(tile.x + 1, tile.y + 1, tile.z))
 
-    tmp_path = "/vsimem/%d/%d/%d" % (tile.z, tile.x, tile.y)
+    tmp_path = "/vsimem/tile"
 
     with rasterio.open(input, "r") as src:
         meta = src.meta.copy()
