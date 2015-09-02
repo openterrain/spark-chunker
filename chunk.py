@@ -73,7 +73,7 @@ def process_chunk(tile, input, creation_options, resampling="near", out_dir=".")
                     num_threads=multiprocessing.cpu_count() / 2,
                 )
 
-            # check for chunks contain only NODATA
+            # check for chunks containing only NODATA
             tile_data = tmp.read()
             if tile_data.all() and tile_data[0][0][0] == src.nodata:
                 return
