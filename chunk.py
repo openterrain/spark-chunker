@@ -148,7 +148,7 @@ def chunk(input, out_dir):
         "crs": "EPSG:3857",
         "tiled": True,
         "compress": "deflate",
-        "predictor":   2, # 3 for floats, 2 otherwise
+        "predictor":   3, # 3 for floats, 2 otherwise
         "sparse_ok": True,
         "blockxsize": 256,
         "blockysize": 256,
@@ -169,7 +169,7 @@ def main(sc, input, out_dir):
         "crs": "EPSG:3857",
         "tiled": True,
         "compress": "deflate",
-        "predictor":   2, # 3 for floats, 2 otherwise
+        "predictor":   3, # 3 for floats, 2 otherwise
         "sparse_ok": True,
         "blockxsize": 256,
         "blockysize": 256,
