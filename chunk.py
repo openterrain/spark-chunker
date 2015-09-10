@@ -7,6 +7,7 @@ from urlparse import urlparse
 import boto3
 import mercantile
 import numpy
+import quadtree
 import rasterio
 from rasterio import crs
 from rasterio.transform import from_bounds
@@ -184,7 +185,11 @@ def main(sc, input, out_dir):
 
     tiles = sc.parallelize(source_pages).flatMap(lambda page: page["Contents"]).map(lambda item: "s3://ned-13arcsec.openterrain.org/" + item["Key"]).repartition(sc.defaultParallelism).flatMap(lambda source: get_tiles(zoom, source)).distinct().cache()
 
-    tiles.foreach(lambda tile: process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
+    # repartition tiles so a given task only processes the children of a given
+    # tile
+    tiles = tiles.map(lambda tile: (quadtree.encode(*mercantile.ul(*tile), precision=tile.z), tile)).sortByKey(numPartitions=tiles.count() / 4)
+
+    tiles.foreach(lambda (q,tile): process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir))
 
 
 if __name__ == "__main__":

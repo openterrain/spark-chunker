@@ -1,4 +1,5 @@
 boto3
-rasterio
 mercantile
 psutil
+python-geohash
+rasterio
