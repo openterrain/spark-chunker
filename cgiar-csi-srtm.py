@@ -47,56 +47,59 @@ def convert(input, output):
     resampling = getattr(RESAMPLING, resampling)
 
     with rasterio.drivers():
-        with rasterio.open(input) as src:
-            out_kwargs = src.meta.copy()
-            out_kwargs["driver"] = driver
+        try:
+            with rasterio.open(input) as src:
+                out_kwargs = src.meta.copy()
+                out_kwargs["driver"] = driver
 
-            dst_crs = crs.from_string(dst_crs)
-            dst_transform, dst_width, dst_height = calculate_default_transform(
-                src.crs, dst_crs, src.width, src.height, *src.bounds,
-                resolution=None)
+                dst_crs = crs.from_string(dst_crs)
+                dst_transform, dst_width, dst_height = calculate_default_transform(
+                    src.crs, dst_crs, src.width, src.height, *src.bounds,
+                    resolution=None)
 
-            out_kwargs.update({
-                "crs": dst_crs,
-                "transform": dst_transform,
-                "affine": dst_transform,
-                "width": dst_width,
-                "height": dst_height
-            })
+                out_kwargs.update({
+                    "crs": dst_crs,
+                    "transform": dst_transform,
+                    "affine": dst_transform,
+                    "width": dst_width,
+                    "height": dst_height
+                })
 
-            out_kwargs.update(**creation_options)
+                out_kwargs.update(**creation_options)
 
-            with rasterio.open("/vsimem/img", "w", **out_kwargs) as dst:
-                for i in range(1, src.count + 1):
-                    reproject(
-                        source=rasterio.band(src, i),
-                        destination=rasterio.band(dst, i),
-                        src_transform=src.affine,
-                        src_crs=src.crs,
-                        dst_transform=out_kwargs["transform"],
-                        dst_crs=out_kwargs["crs"],
-                        resampling=resampling,
-                        num_threads=threads)
+                with rasterio.open("/vsimem/img", "w", **out_kwargs) as dst:
+                    for i in range(1, src.count + 1):
+                        reproject(
+                            source=rasterio.band(src, i),
+                            destination=rasterio.band(dst, i),
+                            src_transform=src.affine,
+                            src_crs=src.crs,
+                            dst_transform=out_kwargs["transform"],
+                            dst_crs=out_kwargs["crs"],
+                            resampling=resampling,
+                            num_threads=threads)
 
-            contents = bytearray(virtual_file_to_buffer("/vsimem/img"))
+                contents = bytearray(virtual_file_to_buffer("/vsimem/img"))
 
-            if uri.scheme == "s3":
-                client = boto3.client("s3")
+                if uri.scheme == "s3":
+                    client = boto3.client("s3")
 
-                response = client.put_object(
-                    ACL="public-read",
-                    Body=bytes(contents),
-                    Bucket=uri.netloc,
-                    # CacheControl="TODO",
-                    ContentType="image/tiff",
-                    Key=uri.path[1:]
-                )
-            else:
-                f = open(output, "w")
-                f.write(contents)
-                f.close()
+                    response = client.put_object(
+                        ACL="public-read",
+                        Body=bytes(contents),
+                        Bucket=uri.netloc,
+                        # CacheControl="TODO",
+                        ContentType="image/tiff",
+                        Key=uri.path[1:]
+                    )
+                else:
+                    f = open(output, "w")
+                    f.write(contents)
+                    f.close()
 
-            return output
+                return output
+        except:
+            print "%s failed to process" % (input)
 
 def main(sc):
     client = boto3.client("s3")
