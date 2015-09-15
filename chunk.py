@@ -209,12 +209,6 @@ def write(creation_options, out_dir):
 def merge((_, out), (tile, (corner, data))):
     (dx, dy) = OFFSETS[corner]
 
-    print("corner", corner)
-    print("dx", dx)
-    print("dy", dy)
-    print("out.shape", out.shape)
-    print("data.shape", data.shape)
-
     out[dy:dy + (CHUNK_SIZE / 2), dx:dx + (CHUNK_SIZE / 2)] = data
 
     return (tile, out)
