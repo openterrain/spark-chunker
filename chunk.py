@@ -145,7 +145,10 @@ def contains_data(data):
 
 
 def z_key(tile):
-    return quadtree.encode(*mercantile.ul(*tile), precision=tile.z)
+    if tile.z > 1:
+        return quadtree.encode(*mercantile.ul(*tile), precision=tile.z)
+    else:
+        return ""
 
 
 def write(creation_options, out_dir):
@@ -364,12 +367,12 @@ def main2(sc, input, out_dir):
         # output: (quadkey, (tile, data))
         subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile)).cache()
 
-        print("%d tiles at zoom %d" % (subtiles.count(), z))
+        print("%d subtiles at zoom %d" % (subtiles.count(), z))
 
         # partitioning isn't ideal here, as empty tiles will have been dropped,
         # unsettling the balance
         # output: (quadkey, (tile, data))
-        subtiles = subtiles.sortByKey(numPartitions=subtiles.count() / 4).cache()
+        subtiles = subtiles.sortByKey(numPartitions=max(1, subtiles.count() / 4)).cache()
 
         # merge subtiles
         # output: (quadkey, (tile, data))
