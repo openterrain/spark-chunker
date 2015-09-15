@@ -118,6 +118,7 @@ def downsample((tile, data)):
     meta = {
         "driver": "GTiff",
         "crs": "EPSG:3857",
+        "nodata": data.fill_value,
         "count": 1,
         "dtype": data.dtype,
         "width": CHUNK_SIZE,
@@ -128,15 +129,19 @@ def downsample((tile, data)):
     with rasterio.drivers():
         with rasterio.open(tmp_path, "w", **meta) as tmp:
             tmp.write(data, 1)
-            out = np.empty((CHUNK_SIZE / 2, CHUNK_SIZE / 2), data.dtype)
-            resampled = tmp.read(1, masked=True, out=out)
+            resampled = tmp.read(1,
+                                 masked=True,
+                                 out=np.empty((CHUNK_SIZE / 2, CHUNK_SIZE / 2), data.dtype))
+
+            if resampled.mask.all():
+                return
 
             corner = CORNERS[(tile.x % 2, tile.y % 2)]
-            return (mercantile.parent(tile), (corner, out))
+            return (mercantile.parent(tile), (corner, resampled))
 
 
 def contains_data(data):
-    return data is not None and not data[1].mask.all()
+    return data is not None
 
 
 def z_key(tile):
@@ -160,6 +165,7 @@ def write(creation_options, out_dir):
         # create GeoTIFF
         meta = creation_options.copy()
         meta["count"] = 1
+        meta["nodata"] = data.fill_value
         meta["dtype"] = data.dtype
         meta["width"] = CHUNK_SIZE
         meta["height"] = CHUNK_SIZE
