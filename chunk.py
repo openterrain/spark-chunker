@@ -355,10 +355,10 @@ def main2(sc, input, out_dir):
 
     # chunk initial zoom level and fetch contents
     # output: (quadkey, (tile, ndarray))
-    chunks = tiles.mapValues(lambda tile: process_chunk(tile, input, meta, resampling=resampling, out_dir=out_dir)).filter(lambda (q, data): contains_data(data)).cache()
+    chunks = tiles.mapValues(lambda tile: process_chunk(tile, input, meta, resampling=resampling, out_dir=out_dir)).values().filter(contains_data).cache()
 
     # write out chunks
-    chunks.values().foreach(write(meta, out_dir))
+    chunks.foreach(write(meta, out_dir))
 
     print("%d chunks at zoom %d" % (chunks.count(), zoom))
 
@@ -368,7 +368,7 @@ def main2(sc, input, out_dir):
 
         # downsample and re-key according to new tile
         # output: (quadkey, (tile, data))
-        subtiles = chunks.mapValues(downsample).values().keyBy(lambda (tile, _): z_key(tile)).cache()
+        subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile)).cache()
 
         print("%d tiles at zoom %d" % (subtiles.count(), z))
 
@@ -379,10 +379,10 @@ def main2(sc, input, out_dir):
 
         # merge subtiles
         # output: (quadkey, (tile, data))
-        chunks = subtiles.foldByKey((None, ma.masked_array(data=np.empty((CHUNK_SIZE, CHUNK_SIZE), meta["dtype"]), mask=True, fill_value=meta["nodata"])), merge).filter(lambda (q, data): contains_data(data)).cache()
+        chunks = subtiles.foldByKey((None, ma.masked_array(data=np.empty((CHUNK_SIZE, CHUNK_SIZE), meta["dtype"]), mask=True, fill_value=meta["nodata"])), merge).values().filter(contains_data).cache()
 
         # write out chunks
-        chunks.values().foreach(write(meta, out_dir))
+        chunks.foreach(write(meta, out_dir))
 
 if __name__ == "__main__":
     from pyspark import SparkConf, SparkContext
