@@ -14,7 +14,7 @@ import quadtree
 import rasterio
 from rasterio import crs
 from rasterio.transform import from_bounds
-from rasterio.warp import (reproject, RESAMPLING, calculate_default_transform, transform)
+from rasterio.warp import (reproject, calculate_default_transform, transform)
 from rasterio._io import virtual_file_to_buffer
 
 APP_NAME = "Reproject and chunk"
@@ -44,8 +44,10 @@ def mkdir_p(dir):
         else: raise
 
 
-def process_chunk(tile, input, creation_options, resampling=0, out_dir="."):
+def process_chunk(tile, input, creation_options, resampling="bilinear", out_dir="."):
     """Process a single tile."""
+
+    from rasterio.warp import RESAMPLING
 
     input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
     input_uri = urlparse(input)
@@ -88,7 +90,7 @@ def process_chunk(tile, input, creation_options, resampling=0, out_dir="."):
                     reproject(
                         source=rasterio.band(src, bidx),
                         destination=rasterio.band(tmp, bidx),
-                        resampling=resampling,
+                        resampling=getattr(RESAMPLING, resampling),
                         num_threads=multiprocessing.cpu_count() / 2,
                     )
 
@@ -323,7 +325,7 @@ def main(sc, input, out_dir):
 def main2(sc, input, out_dir):
     zoom = get_zoom(input)
     meta = get_meta(input)
-    resampling = getattr(RESAMPLING, "bilinear")
+    resampling = "bilinear"
 
     meta.update({
         "driver": "GTiff",
