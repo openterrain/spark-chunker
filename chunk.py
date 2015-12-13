@@ -84,6 +84,8 @@ def process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=
             meta["width"] = CHUNK_SIZE
             meta["transform"] = from_bounds(ulx, lry, lrx, uly, CHUNK_SIZE, CHUNK_SIZE)
 
+            # TODO write into a numpy array and check that before writing it
+            # into an image
             with rasterio.open(tmp_path, "w", **meta) as tmp:
                 # Reproject the src dataset into image tile.
                 for bidx in src.indexes:
@@ -95,6 +97,7 @@ def process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=
                     )
 
                 # check for chunks containing only NODATA
+                # TODO try any() for speed
                 tile_data = tmp.read(masked=True)
                 if tile_data.mask.all():
                     return
@@ -185,6 +188,8 @@ def write(creation_options, out_dir):
         contents = bytearray(virtual_file_to_buffer(tmp_path))
 
         if output_uri.scheme == "s3":
+            # TODO use mapPartitions so that the client only needs to be
+            # instantiated once per partition
             client = boto3.client("s3")
 
             bucket = output_uri.netloc
@@ -390,7 +395,8 @@ if __name__ == "__main__":
     sc = SparkContext(conf=conf)
 
     # main(sc, "http://s3.amazonaws.com/ned-13arcsec.openterrain.org/4326.vrt", "s3://ned-13arcsec.openterrain.org/3857")
-    main2(sc, "imgn19w065_13.tif", "chunks")
+    # main2(sc, "imgn19w065_13.tif", "chunks")
+    main2(sc, "/Users/seth/src/openterrain/spark-chunker/imgn19w065_13.tif", "/Users/seth/src/openterrain/spark-chunker/chunks")
     # main(sc, "4326.vrt", "ned")
     # main(sc, "imgn19w065_13.tif", "s3://ned-13arcsec.openterrain.org/3857")
 
