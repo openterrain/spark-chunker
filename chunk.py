@@ -1,6 +1,9 @@
 from __future__ import print_function
 
 import errno
+import fileinput
+import itertools
+import json
 import math
 import multiprocessing
 import os
@@ -10,6 +13,7 @@ import boto3
 import mercantile
 import numpy as np
 import numpy.ma as ma
+from pyspark import StorageLevel
 import quadtree
 import rasterio
 from rasterio import crs
@@ -44,7 +48,7 @@ def mkdir_p(dir):
         else: raise
 
 
-def process_chunk(tile, input, creation_options, resampling="bilinear", out_dir="."):
+def process_chunk(tile, input, creation_options, resampling="bilinear"):
     """Process a single tile."""
 
     from rasterio.warp import RESAMPLING
@@ -99,6 +103,7 @@ def process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=
                 # check for chunks containing only NODATA
                 # TODO try any() for speed
                 tile_data = tmp.read(masked=True)
+
                 if tile_data.mask.all():
                     return
 
@@ -151,7 +156,7 @@ def contains_data(data):
 
 def z_key(tile):
     if tile.z > 1:
-        return quadtree.encode(*mercantile.ul(*tile), precision=tile.z)
+        return quadtree.encode(*list(reversed(mercantile.ul(*tile))), precision=tile.z)
     else:
         return ""
 
@@ -263,103 +268,33 @@ def get_tiles(zoom, input, dst_crs="EPSG:3857"):
                 west, south, east, north, range(zoom, zoom + 1))
 
 
-def chunk(input, out_dir):
-    """
-    Intended for conversion from whatever the source format is to matching
-    filenames containing 4326 data, etc.
-    """
-    resampling = "bilinear"
+def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="bilinear"):
+    meta = dict(
+        driver="GTiff",
+        crs="EPSG:3857",
+        tiled=True,
+        compress="deflate",
+        predictor=2,
+        sparse_ok=True,
+        blockxsize=256,
+        blockysize=256,
+    )
 
-    creation_options = {
-        "driver": "GTiff",
-        "crs": "EPSG:3857",
-        "tiled": True,
-        "compress": "deflate",
-        "predictor":   3, # 3 for floats, 2 otherwise
-        "sparse_ok": True,
-        "blockxsize": 256,
-        "blockysize": 256,
-    }
-
-    tiles = get_tiles(input, dst_crs=creation_options["crs"])
-
-    outputs = [process_chunk(tile, input, creation_options, resampling=resampling, out_dir=out_dir) for tile in tiles]
-
-    outputs = filter(lambda x: x is not None, outputs)
-
-    print(outputs)
-
-
-def main(sc, input, out_dir):
-    creation_options = {
-        "driver": "GTiff",
-        "crs": "EPSG:3857",
-        "tiled": True,
-        "compress": "deflate",
-        "predictor":   3, # 3 for floats, 2 otherwise
-        "sparse_ok": True,
-        "blockxsize": 256,
-        "blockysize": 256,
-    }
-
-    zoom = get_zoom(input)
-
-    client = boto3.client("s3")
-
-    paginator = client.get_paginator("list_objects")
-    source_pages = paginator.paginate(Bucket="ned-13arcsec.openterrain.org", Prefix="4326/")
-
-    tiles = sc.parallelize(source_pages).flatMap(lambda page: page["Contents"]).map(lambda item: "s3://ned-13arcsec.openterrain.org/" + item["Key"]).repartition(sc.defaultParallelism).flatMap(lambda source: get_tiles(zoom, source)).distinct().cache()
-
-    # repartition tiles so a given task only processes the children of a given
-    # tile
-    tiles = tiles.map(lambda tile: (quadtree.encode(*mercantile.ul(*tile), precision=tile.z), tile)).sortByKey(numPartitions=tiles.count() / 4)
-
-    chunks = tiles.map(lambda (q,tile): process_chunk(tile, input, creation_options, resampling="bilinear", out_dir=out_dir)).filter(contains_data)
-
-    chunks.map(downsample).filter(contains_data).map(z_key)
-
-    # partitioning isn't ideal here, as empty tiles will have been dropped
-    subtiles = subtiles.sortByKey(numPartitions=subtiles.count() / 4)
-
-    # TODO need nodata, dtype
-    # TODO deal with multiple bands (probably with flatMapValues)
-    subtiles.foldByKey(np.full((CHUNK_SIZE, CHUNK_SIZE), "-1", "float32"), merge).map(write).map(downsample).filter(contains_data).map(z_key)
-
-
-def main2(sc, input, out_dir):
-    zoom = get_zoom(input)
-    meta = get_meta(input)
-    resampling = "bilinear"
-
-    meta.update({
-        "driver": "GTiff",
-        "crs": "EPSG:3857",
-        "tiled": True,
-        "compress": "deflate",
-        "sparse_ok": True,
-        "blockxsize": 256,
-        "blockysize": 256,
-    })
-
-    if np.dtype(meta["dtype"]).kind == "f":
+    if np.dtype(dtype).kind == "f":
         meta["predictor"] = 3
-    else:
-        meta["predictor"] = 2
-
-    # generate a list of tiles covering input
-    tiles = sc.parallelize([input]).flatMap(lambda source: get_tiles(zoom, source)).distinct().cache()
 
     # repartition tiles so a given task only processes the children of a given
     # tile
     # output: (quadkey, tile)
-    tiles = tiles.keyBy(z_key).sortByKey(numPartitions=tiles.count() / 4).cache()
+    tiles = tiles.keyBy(z_key).sortByKey(numPartitions=tiles.count() / 4).persist(StorageLevel.MEMORY_AND_DISK)
+
+    print("%d partitions" % (tiles.count() / 4))
 
     print("%d tiles to process" % (tiles.count()))
 
     # chunk initial zoom level and fetch contents
     # output: (quadkey, (tile, ndarray))
-    chunks = tiles.mapValues(lambda tile: process_chunk(tile, input, meta, resampling=resampling, out_dir=out_dir)).values().filter(contains_data).cache()
+    chunks = tiles.mapValues(lambda tile: process_chunk(tile, input, meta, resampling=resampling)).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
 
     # write out chunks
     chunks.foreach(write(meta, out_dir))
@@ -372,18 +307,20 @@ def main2(sc, input, out_dir):
 
         # downsample and re-key according to new tile
         # output: (quadkey, (tile, data))
-        subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile)).cache()
+        # TODO does not need to be persisted
+        # subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile)).persist(StorageLevel.DISK_ONLY)
+        subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile))
 
-        print("%d subtiles at zoom %d" % (subtiles.count(), z))
+        # print("%d subtiles at zoom %d" % (subtiles.count(), z))
 
         # partitioning isn't ideal here, as empty tiles will have been dropped,
         # unsettling the balance
         # output: (quadkey, (tile, data))
-        subtiles = subtiles.sortByKey(numPartitions=max(1, subtiles.count() / 4)).cache()
+        subtiles = subtiles.sortByKey(numPartitions=max(1, subtiles.count() / 4)).persist(StorageLevel.DISK_ONLY)
 
         # merge subtiles
         # output: (quadkey, (tile, data))
-        chunks = subtiles.foldByKey((None, ma.masked_array(data=np.empty((CHUNK_SIZE, CHUNK_SIZE), meta["dtype"]), mask=True, fill_value=meta["nodata"])), merge).values().filter(contains_data).cache()
+        chunks = subtiles.foldByKey((None, ma.masked_array(data=np.empty((CHUNK_SIZE, CHUNK_SIZE), dtype), mask=True, fill_value=nodata)), merge).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
 
         # write out chunks
         chunks.foreach(write(meta, out_dir))
@@ -394,11 +331,21 @@ if __name__ == "__main__":
     conf = SparkConf().setAppName(APP_NAME)
     sc = SparkContext(conf=conf)
 
-    # main(sc, "http://s3.amazonaws.com/ned-13arcsec.openterrain.org/4326.vrt", "s3://ned-13arcsec.openterrain.org/3857")
-    # main2(sc, "imgn19w065_13.tif", "chunks")
-    main2(sc, "/Users/seth/src/openterrain/spark-chunker/imgn19w065_13.tif", "/Users/seth/src/openterrain/spark-chunker/chunks")
-    # main(sc, "4326.vrt", "ned")
-    # main(sc, "imgn19w065_13.tif", "s3://ned-13arcsec.openterrain.org/3857")
+    input = "/Users/seth/src/openterrain/spark-chunker/imgn19w065_13.tif"
 
-    # chunk("imgn19w065_13.tif", "s3://ned-13arcsec.openterrain.org/3857")
-    # chunk("imgn19w065_13.tif", "chunks")
+    zoom = get_zoom(input)
+    meta = get_meta(input)
+
+    # TODO pull zoom, dtype, nodata, input, out_dir using argparse
+
+    # TODO fileinput.input() supposedly reads from STDIN, except where it doesn't
+    tiles = sc.parallelize(itertools.imap(lambda line: mercantile.Tile(*json.loads(line)), fileinput.input())).distinct()
+
+    chunk(sc,
+        zoom=zoom,
+        dtype=meta["dtype"],
+        nodata=meta["nodata"],
+        tiles=tiles,
+        input="/Users/seth/src/openterrain/spark-chunker/ned-13arcsec.vrt",
+        out_dir="/Users/seth/src/openterrain/spark-chunker/chunks",
+    )

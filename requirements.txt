@@ -2,4 +2,4 @@ boto3
 mercantile
 psutil
 python-geohash
-rasterio
+rasterio==0.29.0
