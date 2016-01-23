@@ -127,7 +127,7 @@ def downsample((tile, data)):
             resampled = tmp.read(
                 indexes=1,
                 masked=True,
-                out=np.empty((CHUNK_SIZE / 2, CHUNK_SIZE / 2), data.dtype)
+                out=ma.array(np.empty((CHUNK_SIZE / 2, CHUNK_SIZE / 2), data.dtype)),
             )
 
             if resampled.mask.all():
@@ -138,7 +138,14 @@ def downsample((tile, data)):
 
 
 def contains_data(data):
-    return data is not None
+    if data is not None:
+        (tile, data) = data
+        if not isinstance(data, tuple):
+            return not data.mask.all()
+
+        return True
+
+    return False
 
 
 def z_key(tile):
@@ -204,8 +211,6 @@ def write(creation_options, out_dir):
             f.write(contents)
             f.close()
 
-        return (tile, data)
-
     return _write
 
 
@@ -213,6 +218,9 @@ def merge((_, out), (tile, (corner, data))):
     (dx, dy) = OFFSETS[corner]
 
     out[dy:dy + (CHUNK_SIZE / 2), dx:dx + (CHUNK_SIZE / 2)] = data
+
+    out = ma.masked_equal(out, data.fill_value)
+    out.fill_value = data.fill_value
 
     return (tile, out)
 
@@ -310,7 +318,9 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="bilinear")
 
         # merge subtiles
         # output: (quadkey, (tile, data))
-        chunks = subtiles.foldByKey((None, ma.masked_array(data=np.empty((CHUNK_SIZE, CHUNK_SIZE), dtype), mask=True, fill_value=nodata)), merge).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
+        empty = ma.masked_array(np.empty((CHUNK_SIZE, CHUNK_SIZE), dtype), fill_value=nodata)
+        empty.fill(nodata)
+        chunks = subtiles.foldByKey((None, empty), merge).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
 
         # write out chunks
         chunks.foreach(write(meta, out_dir))
