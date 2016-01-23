@@ -264,6 +264,8 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="bilinear")
         compress="deflate",
         predictor=2,
         sparse_ok=True,
+        nodata=nodata,
+        dtype=dtype,
         blockxsize=256,
         blockysize=256,
     )
