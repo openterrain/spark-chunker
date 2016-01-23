@@ -121,10 +121,14 @@ def downsample((tile, data)):
 
     with rasterio.drivers():
         with rasterio.open(tmp_path, "w", **meta) as tmp:
+            # use GDAL to resample by writing an ndarray and immediately reading
+            # it out into a smaller array
             tmp.write(data, 1)
-            resampled = tmp.read(1,
-                                 masked=True,
-                                 out=np.empty((CHUNK_SIZE / 2, CHUNK_SIZE / 2), data.dtype))
+            resampled = tmp.read(
+                indexes=1,
+                masked=True,
+                out=np.empty((CHUNK_SIZE / 2, CHUNK_SIZE / 2), data.dtype)
+            )
 
             if resampled.mask.all():
                 return
@@ -181,6 +185,7 @@ def write(creation_options, out_dir):
             client = boto3.client("s3")
 
             bucket = output_uri.netloc
+            # TODO strip out trailing slashes on the path if necessary
             key = "%s/%d/%d/%d.tif" % (output_uri.path[1:], tile.z, tile.x, tile.y)
 
             response = client.put_object(
