@@ -333,9 +333,12 @@ if __name__ == "__main__":
 
     chunk(sc,
         zoom=zoom,
-        dtype=meta["dtype"],
-        nodata=meta["nodata"],
+        # dtype=meta["dtype"],
+        dtype="int16"   ,
+        # nodata=meta["nodata"],
+        nodata=-32768,
         tiles=tiles,
         input="/Users/seth/src/openterrain/spark-chunker/ned-13arcsec.vrt",
+        # out_dir="s3://tmp.stamen.com/ned",
         out_dir="/Users/seth/src/openterrain/spark-chunker/chunks",
     )
