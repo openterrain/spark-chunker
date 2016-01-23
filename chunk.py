@@ -73,8 +73,7 @@ def process_chunk(tile, input, creation_options, resampling="bilinear"):
             meta["width"] = CHUNK_SIZE
             meta["transform"] = from_bounds(ulx, lry, lrx, uly, CHUNK_SIZE, CHUNK_SIZE)
 
-            # TODO write into a numpy array and check that before writing it
-            # into an image
+            # write to a tmp file to allow GDAL to handle the transform
             with rasterio.open(tmp_path, "w", **meta) as tmp:
                 # Reproject the src dataset into image tile.
                 for bidx in src.indexes:
@@ -86,7 +85,6 @@ def process_chunk(tile, input, creation_options, resampling="bilinear"):
                     )
 
                 # check for chunks containing only NODATA
-                # TODO try any() for speed
                 tile_data = tmp.read(masked=True)
 
                 if tile_data.mask.all():
