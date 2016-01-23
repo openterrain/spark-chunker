@@ -54,21 +54,6 @@ def process_chunk(tile, input, creation_options, resampling="bilinear"):
     from rasterio.warp import RESAMPLING
 
     input = input.replace("s3://", "/vsicurl/http://s3.amazonaws.com/")
-    input_uri = urlparse(input)
-
-    if input_uri.scheme == "s3":
-        client = boto.client("s3")
-
-        bucket = input_uri.netloc
-        key = input_uri.path[1:]
-
-        response = client.head_object(
-            Bucket=bucket,
-            Prefix=key
-        )
-
-        if response.get("Contents") is not None:
-            return
 
     print("Chunking initial image for", tile)
 
