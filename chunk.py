@@ -48,7 +48,7 @@ def mkdir_p(dir):
         else: raise
 
 
-def process_chunk(tile, input, creation_options, resampling="bilinear"):
+def process_chunk(tile, input, creation_options, resampling):
     """Process a single tile."""
 
     from rasterio.warp import RESAMPLING
@@ -85,13 +85,13 @@ def process_chunk(tile, input, creation_options, resampling="bilinear"):
                     )
 
                 # check for chunks containing only NODATA
-                tile_data = tmp.read(masked=True)
+                data = tmp.read(masked=True)
 
-                if tile_data.mask.all():
-                    return
+            if data.mask.all():
+                return
 
-                # TODO hard-coded for the first band
-                return (tile, tile_data[0])
+            # TODO hard-coded for the first band
+            return (tile, data[0])
 
 
 # NOTE: assumes 1 band
@@ -219,9 +219,6 @@ def merge((_, out), (tile, (corner, data))):
 
     out[dy:dy + (CHUNK_SIZE / 2), dx:dx + (CHUNK_SIZE / 2)] = data
 
-    out = ma.masked_equal(out, data.fill_value)
-    out.fill_value = data.fill_value
-
     return (tile, out)
 
 
@@ -264,7 +261,7 @@ def get_tiles(zoom, input, dst_crs="EPSG:3857"):
                 west, south, east, north, range(zoom, zoom + 1))
 
 
-def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="bilinear"):
+def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
     meta = dict(
         driver="GTiff",
         crs="EPSG:3857",
@@ -305,11 +302,7 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="bilinear")
 
         # downsample and re-key according to new tile
         # output: (quadkey, (tile, data))
-        # TODO does not need to be persisted
-        # subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile)).persist(StorageLevel.DISK_ONLY)
         subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile))
-
-        # print("%d subtiles at zoom %d" % (subtiles.count(), z))
 
         # partitioning isn't ideal here, as empty tiles will have been dropped,
         # unsettling the balance
@@ -318,8 +311,7 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="bilinear")
 
         # merge subtiles
         # output: (quadkey, (tile, data))
-        empty = ma.masked_array(np.empty((CHUNK_SIZE, CHUNK_SIZE), dtype), fill_value=nodata)
-        empty.fill(nodata)
+        empty = ma.masked_array(np.full((CHUNK_SIZE, CHUNK_SIZE), nodata, dtype), fill_value=nodata)
         chunks = subtiles.foldByKey((None, empty), merge).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
 
         # write out chunks
@@ -343,10 +335,8 @@ if __name__ == "__main__":
 
     chunk(sc,
         zoom=zoom,
-        # dtype=meta["dtype"],
-        dtype="int16"   ,
-        # nodata=meta["nodata"],
-        nodata=-32768,
+        dtype=meta["dtype"],
+        nodata=meta["nodata"],
         tiles=tiles,
         input="/Users/seth/src/openterrain/spark-chunker/ned-13arcsec.vrt",
         # out_dir="s3://tmp.stamen.com/ned",
