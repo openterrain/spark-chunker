@@ -40,6 +40,9 @@ being chunked to the same tile twice.
 gdalbuildvrt -resolution highest ned-13arcsec.vrt ned-13arcsec.shp
 ```
 
+The VRT needs to be manually tweaked to set the `NoDataValue` for the entire
+group to be the same as individual `NODATA` values.
+
 Using the GeoJSON index and `mercantile`, we can produce a list of tiles at our
 target zoom (determined with the help of `get_zoom()` in `chunk.py`, as it's
 dependent on the source resolution and the target chunk size):
