@@ -302,12 +302,12 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
 
         # downsample and re-key according to new tile
         # output: (quadkey, (tile, data))
-        subtiles = chunks.map(downsample).filter(contains_data).keyBy(lambda (tile, _): z_key(tile))
+        subtiles = chunks.map(downsample).filter(contains_data).persist(StorageLevel.DISK_ONLY).keyBy(lambda (tile, _): z_key(tile))
 
         # partitioning isn't ideal here, as empty tiles will have been dropped,
         # unsettling the balance
         # output: (quadkey, (tile, data))
-        subtiles = subtiles.sortByKey(numPartitions=max(1, subtiles.count() / 4)).persist(StorageLevel.DISK_ONLY)
+        subtiles = subtiles.sortByKey(numPartitions=max(1, chunks.count() / 4)).persist(StorageLevel.DISK_ONLY)
 
         # merge subtiles
         # output: (quadkey, (tile, data))
