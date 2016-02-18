@@ -21,7 +21,7 @@ from rasterio.transform import from_bounds
 from rasterio.warp import (reproject, calculate_default_transform, transform)
 from rasterio._io import virtual_file_to_buffer
 
-APP_NAME = "Reproject and chunk"
+APP_NAME = "Chunk"
 CHUNK_SIZE = 2048 # 4096 produces ~50MB files for NED
 
 CORNERS = {
@@ -81,7 +81,7 @@ def process_chunk(tile, input, creation_options, resampling):
                         source=rasterio.band(src, bidx),
                         destination=rasterio.band(tmp, bidx),
                         resampling=getattr(RESAMPLING, resampling),
-                        num_threads=multiprocessing.cpu_count() / 2,
+                        num_threads=multiprocessing.cpu_count(),
                     )
 
                 # check for chunks containing only NODATA
@@ -278,14 +278,15 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
     if np.dtype(dtype).kind == "f":
         meta["predictor"] = 3
 
+    tile_count = tiles.count()
+
     # repartition tiles so a given task only processes the children of a given
     # tile
     # output: (quadkey, tile)
-    tiles = tiles.keyBy(z_key).sortByKey(numPartitions=tiles.count() / 4).persist(StorageLevel.MEMORY_AND_DISK)
+    tiles = tiles.keyBy(z_key).sortByKey(numPartitions=tile_count).persist(StorageLevel.MEMORY_AND_DISK)
 
-    print("%d partitions" % (tiles.count() / 4))
-
-    print("%d tiles to process" % (tiles.count()))
+    print("%d partitions" % (tile_count / 4))
+    print("%d tiles to process" % (tile_count))
 
     # chunk initial zoom level and fetch contents
     # output: (quadkey, (tile, ndarray))
@@ -294,11 +295,13 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
     # write out chunks
     chunks.foreach(write(meta, out_dir))
 
-    print("%d chunks at zoom %d" % (chunks.count(), zoom))
+    # TODO if we really want to know the number of chunks, use an accumulator (.count() will collect() all results)
+    # print("%d chunks at zoom %d" % (chunks.count(), zoom))
 
     # TODO deal with multiple bands (probably with flatMapValues)
     for z in range(zoom - 1, -1, -1):
         print("Processing zoom %d" % (z))
+        tile_count = tile_count / 4
 
         # downsample and re-key according to new tile
         # output: (quadkey, (tile, data))
@@ -307,7 +310,8 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
         # partitioning isn't ideal here, as empty tiles will have been dropped,
         # unsettling the balance
         # output: (quadkey, (tile, data))
-        subtiles = subtiles.sortByKey(numPartitions=max(1, chunks.count() / 4)).persist(StorageLevel.DISK_ONLY)
+        # subtiles = subtiles.sortByKey(numPartitions=max(1, chunks.count() / 4)).persist(StorageLevel.DISK_ONLY)
+        subtiles = subtiles.sortByKey(numPartitions=tile_count).persist(StorageLevel.DISK_ONLY)
 
         # merge subtiles
         # output: (quadkey, (tile, data))
@@ -323,10 +327,15 @@ if __name__ == "__main__":
     conf = SparkConf().setAppName(APP_NAME)
     sc = SparkContext(conf=conf)
 
-    input = "/Users/seth/src/openterrain/spark-chunker/imgn19w065_13.tif"
+    # input = "/Users/seth/src/openterrain/spark-chunker/imgn19w065_13.tif"
 
-    zoom = get_zoom(input)
-    meta = get_meta(input)
+    # zoom = get_zoom(input)
+    zoom = 11
+    meta = {
+        "dtype": "float32",
+        "nodata": -3.4028234663852886e+38,
+    }
+    # meta = get_meta(input)
 
     # TODO pull zoom, dtype, nodata, input, out_dir using argparse
 
@@ -338,7 +347,6 @@ if __name__ == "__main__":
         dtype=meta["dtype"],
         nodata=meta["nodata"],
         tiles=tiles,
-        input="/Users/seth/src/openterrain/spark-chunker/ned-13arcsec.vrt",
-        # out_dir="s3://tmp.stamen.com/ned",
-        out_dir="/Users/seth/src/openterrain/spark-chunker/chunks",
+        input="/tmp/4326.vrt",
+        out_dir="s3://ned-13arcsec.openterrain.org/3857",
     )

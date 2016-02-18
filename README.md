@@ -47,12 +47,6 @@ Using the GeoJSON index and `mercantile`, we can produce a list of tiles at our
 target zoom (determined with the help of `get_zoom()` in `chunk.py`, as it's
 dependent on the source resolution and the target chunk size):
 
-TODO we don't want the overall coverage, we want the sum coverage of each feature
-
-```bash
-cat ned-13arcsec.json | tr -d "\n" | mercantile tiles 11 > tiles.txt
-```
-
 ```bash
 jq -rc .features[] ned-13arcsec.json | mercantile tiles 11 > tiles.txt
 ```
@@ -62,5 +56,3 @@ Then, to actually run the chunking task:
 ```bash
 spark-submit chunk.py tiles.txt
 ```
-
-(The content of `tiles.txt` can also be provided on `STDIN`.)
