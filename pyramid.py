@@ -219,20 +219,17 @@ def pyramid(sc, zoom, dtype, nodata, tiles, prefix, resampling="average"):
     print("%d tiles to process" % (tile_count))
 
     # TODO deal with multiple bands (probably with flatMapValues)
-    for z in range(zoom - 1, -1, -1):
+    min_zoom = 0
+    for z in range(zoom - 1, min_zoom - 1, -1):
         print("Processing zoom %d" % (z))
         tile_count = max(1, tile_count / 4)
 
         print("Tile count: %d" % (tile_count))
 
-        #  downsample its children
-        #  merge them
-        #  write out the result
-
         # generate a list of tiles at the current zoom (from available children)
         tiles = tiles.map(
             lambda child: mercantile.parent(child)
-        ).distinct().repartition(max(1, tile_count / 4)
+        ).distinct().repartition(tile_count)
 
         tiles.map(
             # for each parent tile:
@@ -254,11 +251,13 @@ def pyramid(sc, zoom, dtype, nodata, tiles, prefix, resampling="average"):
                         )
                     )
                 ),
-                (None, empty)
+                (None, empty.copy())
             )
         ).filter(
+            # 4. filter out empty tiles
             contains_data
         ).foreach(
+            # 5. write out the result
             write(meta, prefix)
         )
 
