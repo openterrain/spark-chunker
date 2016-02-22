@@ -48,6 +48,13 @@ def mkdir_p(dir):
         else: raise
 
 
+def z_key(tile):
+    if tile.z > 1:
+        return quadtree.encode(*list(reversed(mercantile.ul(*tile))), precision=tile.z)
+    else:
+        return ""
+
+
 def read_chunk(tile, prefix):
     """Reads a single tile."""
 
@@ -129,6 +136,8 @@ def contains_data(data):
 
 def write(creation_options, out_dir):
     def _write((tile, data)):
+        if not contains_data((tile, data)):
+            return
 
         print("Writing", tile)
 
@@ -229,37 +238,37 @@ def pyramid(sc, zoom, dtype, nodata, tiles, prefix, resampling="average"):
         # generate a list of tiles at the current zoom (from available children)
         tiles = tiles.map(
             lambda child: mercantile.parent(child)
-        ).distinct().repartition(tile_count)
+        ).distinct()
 
-        tiles.map(
-            # for each parent tile:
-            lambda parent: reduce(
-                # 3. merge
-                merge,
-                # 2. downsample them
-                filter(
-                    None,
-                    itertools.imap(
-                        downsample,
-                        # 1. fetch children
-                        filter(
+        tiles.keyBy(z_key).partitionBy(tiles.count()).values().mapPartitions(
+            lambda partition: map(
+                # for each parent tile:
+                # 5. write it to disk
+                lambda parent: write(meta, prefix)(
+                    reduce(
+                        # 3. merge
+                        merge,
+                        # 2. downsample them
+                        itertools.ifilter(
                             None,
                             itertools.imap(
-                                lambda tile: read_chunk(tile, prefix),
-                                mercantile.children(parent)
+                                downsample,
+                                # 1. fetch children
+                                itertools.ifilter(
+                                    None,
+                                    itertools.imap(
+                                        lambda tile: read_chunk(tile, prefix),
+                                        mercantile.children(parent)
+                                    )
+                                )
                             )
-                        )
+                        ),
+                        (None, empty.copy())
                     )
                 ),
-                (None, empty.copy())
+                partition
             )
-        ).filter(
-            # 4. filter out empty tiles
-            contains_data
-        ).foreach(
-            # 5. write out the result
-            write(meta, prefix)
-        )
+        ).collect()
 
 
 if __name__ == "__main__":
