@@ -290,36 +290,7 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
 
     # chunk initial zoom level and fetch contents
     # output: (quadkey, (tile, ndarray))
-    chunks = tiles.mapValues(lambda tile: process_chunk(tile, input, meta, resampling=resampling)).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
-
-    # write out chunks
-    chunks.foreach(write(meta, out_dir))
-
-    # TODO if we really want to know the number of chunks, use an accumulator (.count() will collect() all results)
-    # print("%d chunks at zoom %d" % (chunks.count(), zoom))
-
-    # TODO deal with multiple bands (probably with flatMapValues)
-    for z in range(zoom - 1, -1, -1):
-        print("Processing zoom %d" % (z))
-        tile_count = tile_count / 4
-
-        # downsample and re-key according to new tile
-        # output: (quadkey, (tile, data))
-        subtiles = chunks.map(downsample).filter(contains_data).persist(StorageLevel.DISK_ONLY).keyBy(lambda (tile, _): z_key(tile))
-
-        # partitioning isn't ideal here, as empty tiles will have been dropped,
-        # unsettling the balance
-        # output: (quadkey, (tile, data))
-        # subtiles = subtiles.sortByKey(numPartitions=max(1, chunks.count() / 4)).persist(StorageLevel.DISK_ONLY)
-        subtiles = subtiles.sortByKey(numPartitions=tile_count).persist(StorageLevel.DISK_ONLY)
-
-        # merge subtiles
-        # output: (quadkey, (tile, data))
-        empty = ma.masked_array(np.full((CHUNK_SIZE, CHUNK_SIZE), nodata, dtype), fill_value=nodata)
-        chunks = subtiles.foldByKey((None, empty), merge).values().filter(contains_data).persist(StorageLevel.DISK_ONLY)
-
-        # write out chunks
-        chunks.foreach(write(meta, out_dir))
+    tiles.mapValues(lambda tile: process_chunk(tile, input, meta, resampling=resampling)).values().filter(contains_data).foreach(write(meta, out_dir))
 
 if __name__ == "__main__":
     from pyspark import SparkConf, SparkContext
