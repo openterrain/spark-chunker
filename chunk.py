@@ -271,8 +271,8 @@ def chunk(sc, zoom, dtype, nodata, tiles, input, out_dir, resampling="average"):
         sparse_ok=True,
         nodata=nodata,
         dtype=dtype,
-        blockxsize=256,
-        blockysize=256,
+        blockxsize=512,
+        blockysize=512,
     )
 
     if np.dtype(dtype).kind == "f":
