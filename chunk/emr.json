@@ -1,0 +1,48 @@
+[
+  {
+    "Classification": "hadoop-env",
+    "Configurations": [
+      {
+        "Classification": "export",
+        "Properties": {
+          "GDAL_DATA": "/usr/local/share/gdal",
+          "LD_LIBRARY_PATH": "/usr/local/lib"
+        }
+      }
+    ]
+  },
+  {
+    "Classification": "spark-env",
+    "Configurations": [
+      {
+        "Classification": "export",
+        "Properties": {
+          "GDAL_DATA": "/usr/local/share/gdal",
+          "LD_LIBRARY_PATH": "/usr/local/lib"
+        }
+      }
+    ]
+  },
+  {
+    "Classification": "yarn-env",
+    "Configurations": [
+      {
+        "Classification": "export",
+        "Properties": {
+          "GDAL_DATA": "/usr/local/share/gdal",
+          "LD_LIBRARY_PATH": "/usr/local/lib"
+        }
+      }
+    ]
+  },
+  {
+    "Classification": "spark-defaults",
+    "Properties": {
+      "spark.dynamicAllocation.enabled": "true",
+      "spark.executor.memory": "512M",
+      "spark.executor.cores": "1",
+      "spark.speculation": "true",
+      "spark.speculation.multiplier": "5"
+    }
+  }
+]
