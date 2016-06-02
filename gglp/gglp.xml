@@ -1,0 +1,22 @@
+<GDAL_WMS>
+  <Service name="TMS">
+    <ServerUrl>http://s3.amazonaws.com/gglp.openterrain.org/3857/${z}/${x}/${y}.tif</ServerUrl>
+  </Service>
+  <DataWindow>
+    <UpperLeftX>-20037508.34</UpperLeftX>
+    <UpperLeftY>20037508.34</UpperLeftY>
+    <LowerRightX>20037508.34</LowerRightX>
+    <LowerRightY>-20037508.34</LowerRightY>
+    <TileLevel>14</TileLevel>
+    <TileCountX>1</TileCountX>
+    <TileCountY>1</TileCountY>
+    <YOrigin>top</YOrigin>
+  </DataWindow>
+  <Projection>EPSG:3857</Projection>
+  <BlockSizeX>2048</BlockSizeX>
+  <BlockSizeY>2048</BlockSizeY>
+  <BandsCount>1</BandsCount>
+  <DataType>Float32</DataType>
+  <ZeroBlockHttpCodes>403,404</ZeroBlockHttpCodes>
+  <Cache/>
+</GDAL_WMS>
