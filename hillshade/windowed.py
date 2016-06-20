@@ -48,8 +48,8 @@ buffered_window[1][1] += BUFFER
 
 with rasterio.open("mapzen.xml") as src:
     data = src.read(1, window=buffered_window, masked=True)
-    dx = src.meta["affine"][0]
-    dy = -src.meta["affine"][4]
+    dx = abs(src.meta["affine"][0])
+    dy = abs(src.meta["affine"][4])
 
     meta = src.meta.copy()
     del meta["transform"]
