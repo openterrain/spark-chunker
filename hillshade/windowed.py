@@ -1,3 +1,5 @@
+import copy
+
 from matplotlib.colors import LightSource
 import mercantile
 import numpy as np
@@ -36,14 +38,16 @@ window = [
           ]
          ]
 
+buffered_window = copy.deepcopy(window)
+
 # buffer so we have neighboring pixels
-window[0][0] -= BUFFER
-window[0][1] += BUFFER
-window[1][0] -= BUFFER
-window[1][1] += BUFFER
+buffered_window[0][0] -= BUFFER
+buffered_window[0][1] += BUFFER
+buffered_window[1][0] -= BUFFER
+buffered_window[1][1] += BUFFER
 
 with rasterio.open("mapzen.xml") as src:
-    data = src.read(1, window=window, masked=True)
+    data = src.read(1, window=buffered_window, masked=True)
     dx = src.meta["affine"][0]
     dy = -src.meta["affine"][4]
 
@@ -51,9 +55,9 @@ with rasterio.open("mapzen.xml") as src:
     del meta["transform"]
     meta.update(
         driver='GTiff',
-        height=window[0][1] - window[0][0],
-        width=window[1][1] - window[1][0],
-        affine=src.window_transform(window),
+        height=buffered_window[0][1] - buffered_window[0][0],
+        width=buffered_window[1][1] - buffered_window[1][0],
+        affine=src.window_transform(buffered_window),
     )
     with rasterio.open("windowed_src.tif", "w", **meta) as dst:
         dst.write(data, 1)
@@ -62,6 +66,7 @@ with rasterio.open("mapzen.xml") as src:
     del meta["transform"]
 
     meta.update(
+        driver='GTiff',
         dtype=rasterio.uint8,
         compress="deflate",
         predictor=1,
@@ -70,17 +75,14 @@ with rasterio.open("mapzen.xml") as src:
         sparse_ok=True,
         blockxsize=DST_BLOCK_SIZE,
         blockysize=DST_BLOCK_SIZE,
-        driver='GTiff',
+        height=DST_TILE_HEIGHT,
+        width=DST_TILE_WIDTH,
     )
 
     # Get the bounds of the tile.
-    ulx, uly = mercantile.xy(
-        *mercantile.ul(tile.x, tile.y, tile.z))
-    lrx, lry = mercantile.xy(
-        *mercantile.ul(tile.x + 1, tile.y + 1, tile.z))
+    ulx, uly = mercantile.xy(*mercantile.ul(tile.x, tile.y, tile.z))
+    lrx, lry = mercantile.xy(*mercantile.ul(tile.x + 1, tile.y + 1, tile.z))
 
-    meta["height"] = DST_TILE_HEIGHT
-    meta["width"] = DST_TILE_WIDTH
     meta["affine"] = src.window_transform(window)
 
     ls = LightSource()
