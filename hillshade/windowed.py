@@ -1,6 +1,7 @@
 import copy
 
-from matplotlib.colors import LightSource
+from matplotlib.colors import LightSource, LinearSegmentedColormap
+import matplotlib.pyplot as plt
 import mercantile
 import numpy as np
 import rasterio
@@ -99,3 +100,19 @@ with rasterio.open("mapzen.xml") as src:
     with rasterio.open("windowed.tif", "w", **meta) as dst:
         # ignore the border pixels when writing
         dst.write(hs[BUFFER:-BUFFER, BUFFER:-BUFFER], 1)
+
+    cdict = {
+        "red": [(0.0, 60 / 255.0, 60 / 255.0),
+                (1.0, 220 / 255.0, 220 / 255.0)],
+        "green": [(0.0, 75 / 255.0, 75 / 255.0),
+                  (1.0, 1.0, 1.0)],
+        "blue": [(0.0, 80 / 255.0, 80 / 255.0),
+                 (1.0, 100 / 255.0, 100 / 255.0)],
+        "alpha": [(0.0, 0.4, 0.4),
+                  (181 / 255.0, 0.0, 0.0),
+                  (1.0, 0.2, 0.2)]
+    }
+
+    cmap = LinearSegmentedColormap("darkmatter", cdict)
+
+    plt.imsave("windowed_cmap.png", hs, cmap=cmap)
