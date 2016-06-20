@@ -26,11 +26,11 @@ dx = mx - x
 dy = my - y
 top = (2**SRC_TILE_ZOOM * SRC_TILE_HEIGHT) - 1
 
-if dz != 1:
-    print("Unmatched zooms aren't supported yet")
+if dz != -1:
+    print("Unmatched zooms aren't supported yet:", dz)
     exit(1)
 
-# y, x
+# y, x (rows, columns)
 window = [
           [
            top - (top - (SRC_TILE_HEIGHT * y)),
