@@ -9,7 +9,7 @@ BUFFER = 2
 SRC_TILE_ZOOM = 14
 SRC_TILE_WIDTH = 512
 SRC_TILE_HEIGHT = 512
-tile = mercantile.Tile(82, 178, 9)
+# tile = mercantile.Tile(82, 178, 9)
 tile = mercantile.Tile(5252, 11446, 15)
 
 DST_TILE_WIDTH = 256
@@ -25,6 +25,10 @@ my = 2**dz * (tile.y + 1)
 dx = mx - x
 dy = my - y
 top = (2**SRC_TILE_ZOOM * SRC_TILE_HEIGHT) - 1
+
+if dz != 1:
+    print("Unmatched zooms aren't supported yet")
+    exit(1)
 
 # y, x
 window = [
