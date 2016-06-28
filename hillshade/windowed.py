@@ -19,17 +19,14 @@ DST_BLOCK_SIZE = 256
 
 # calculate these in z14 pixels
 dz = SRC_TILE_ZOOM - tile.z
-x = int(2**dz * tile.x)
-y = int(2**dz * tile.y)
+scale = 2**(dz + SRC_TILE_WIDTH / DST_TILE_WIDTH - 1)
+x = 2**dz * tile.x
+y = 2**dz * tile.y
 mx = 2**dz * (tile.x + 1)
 my = 2**dz * (tile.y + 1)
 dx = mx - x
 dy = my - y
 top = (2**SRC_TILE_ZOOM * SRC_TILE_HEIGHT) - 1
-
-if dz != -1:
-    print("Unmatched zooms aren't supported yet:", dz)
-    exit(1)
 
 # y, x (rows, columns)
 window = [
@@ -46,26 +43,36 @@ window = [
 buffered_window = copy.deepcopy(window)
 
 # buffer so we have neighboring pixels
-buffered_window[0][0] -= BUFFER
-buffered_window[0][1] += BUFFER
-buffered_window[1][0] -= BUFFER
-buffered_window[1][1] += BUFFER
+buffered_window[0][0] -= BUFFER * scale
+buffered_window[0][1] += BUFFER * scale
+buffered_window[1][0] -= BUFFER * scale
+buffered_window[1][1] += BUFFER * scale
 
 with rasterio.open("mapzen.xml") as src:
-    data = src.read(1, window=buffered_window, masked=True)
-    dx = abs(src.meta["affine"][0])
-    dy = abs(src.meta["affine"][4])
+    data = np.empty(shape=(260, 260)).astype(src.profile["dtype"])
+    data = src.read(1, out=data, window=buffered_window)
+    # data = src.read(1, window=buffered_window)
+    print("Scale:", scale)
+    dx = abs(src.meta["affine"][0]) * scale
+    dy = abs(src.meta["affine"][4]) * scale
+
+    print("Window:", window)
+    print("Buffered window:", buffered_window)
+    print("Shape:", data.shape)
+    print("Height:", buffered_window[0][1] - buffered_window[0][0])
+    print("Width:", buffered_window[1][1] - buffered_window[1][0])
+    print("Width / scale:", (buffered_window[1][1] - buffered_window[1][0]) / float(scale))
 
     meta = src.meta.copy()
     del meta["transform"]
     meta.update(
         driver='GTiff',
-        height=buffered_window[0][1] - buffered_window[0][0],
-        width=buffered_window[1][1] - buffered_window[1][0],
+        height=DST_TILE_HEIGHT,
+        width=DST_TILE_WIDTH,
         affine=src.window_transform(buffered_window),
     )
     with rasterio.open("windowed_src.tif", "w", **meta) as dst:
-        dst.write(data, 1)
+        dst.write(data[BUFFER:-BUFFER, BUFFER:-BUFFER], 1)
 
     meta = src.meta.copy()
     del meta["transform"]
